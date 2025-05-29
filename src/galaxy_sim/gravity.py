@@ -7,7 +7,8 @@ EPSILON = 1e-8 # softening to avoid div by zero
 
 class Body:
     #intlizies body
-    def __init__(self, mass: float, position: List[float], velocity: List[float] = None, name: str = None, category: str = None):
+    def __init__(self, mass: float, position: List[float], velocity: List[float] = None, name: str = None,
+                 body_type: str = None, body_subtype: str = None):
         assert mass > 0, f"Mass must be positive, got {mass}"
         self.mass = mass
         self.position = np.array(position, dtype=np.float64)
@@ -16,14 +17,25 @@ class Body:
         self.force = np.zeros(3, dtype=np.float64)
 
         self.name = name or "Unnamed"
-        self.category = category or "generic"
-
+        self.body_type = body_type or "generic" #body type
+        self.body_subtype = body_subtype or None # detail
 
     def __repr__(self):
         return f"Body(name={self.name}, mass = {self.mass:.2e}, pos = {self.position}, velocity = {self.velocity}, accel = {self.acceleration})"
 
     def __str__(self):
         return f"{self.name} @ {self.position.round(3)}"
+
+    def short_description(self):
+        return f"{self.name}: {self.body_type} @ {np.linalg.norm(self.position):2e} m"
+
+    def full_description(self):
+        return (f"Name: {self.name}\n"
+                f"Type: {self.body_type}\n"
+                f"Subtype: {self.body_subtype}\n"
+                f"Mass: {self.mass:.2e} kg\n"
+                f"Position: {self.position}\n"
+                f"Velocity: {self.velocity}")
 
 
 ## calculates gravitational force using good old Newton's law
