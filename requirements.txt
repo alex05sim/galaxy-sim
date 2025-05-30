@@ -1,4 +1,4 @@
 numpy~=2.2.6
-
+cupy-cuda12x==13.4.1
 matplotlib~=3.10.3
 vispy~=0.15.2
