@@ -40,8 +40,9 @@ class OrbitViewer3D:
     }
 
     def __init__(self, bodies, trail_length=300):
+
         self.bodies = bodies
-        self.trail_length = trail_length
+        self.trail_length = 5000
         self.positions = {body.name: [body.position.copy()] for body in bodies}
 
         # Create canvas and view
@@ -91,6 +92,16 @@ class OrbitViewer3D:
 
         # Timer for animation
         self.timer = app.Timer(interval=self.FRAME_INTERVAL, connect=self.update_frame, start=True)
+
+        self.steps_to_run = 0
+        self.sim_time = 0
+
+        self.time_label = visuals.Text(
+            "", color='white', parent=self.ui_view.scene,
+            font_size=9, anchor_x='right', anchor_y='top'
+        )
+        self.time_label.pos = (self.CANVAS_SIZE[0] - 10, self.CANVAS_SIZE[1] - 10)
+        self.time_label.visible = True
 
     def _init_starfield(self):
         self.num_stars = self.STAR_COUNT
@@ -156,20 +167,26 @@ class OrbitViewer3D:
             self.info_label.visible = True
             self.full_info_label.text = clicked.short_description()
             self.full_info_label.visible = True
+
     def on_key_press(self, event):
+        if event.key == 'Up':
+            self.time_multiplier *= 2
+        elif event.key == 'Down':
+            self.time_multiplier = max(0.25, self.time_multiplier / 2)
+
+        print(f"⏱ Time multiplier: {self.time_multiplier:.2f}x")
+
         if self.selected_body:
-          if event.key == 'f':
-             self.focus_on(self.selected_body)
-          elif event.key == 'i':
-              self.open_detailed_info(self.selected_body)
-
-
-
-
+            if event.key == 'f':
+                self.focus_on(self.selected_body)
+            elif event.key == 'i':
+                self.open_detailed_info(self.selected_body)
+                
+                
 
     def update_frame(self, event):
-        self.update_star_data()
-
+      ##  self.update_star_data()
+        self.time_label.text = f"Sim Time: {self.sim_time / 86400:.2f} days\nSpeed: {self.time_multiplier:.2f}x"
 
         for body in self.bodies:
             self.positions[body.name].append(body.position.copy())
@@ -186,6 +203,15 @@ class OrbitViewer3D:
                 pos_2d = self.canvas.scene.node_transform(self.view.scene).map(pos_3d)
                 self.info_label.pos = pos_2d[:2]
 
+        from galaxy_sim.gravity import kinetic_energy, potential_energy
+
+        KE = sum(kinetic_energy(b) for b in self.bodies)
+        PE = sum(
+            potential_energy(b1, b2)
+            for i, b1 in enumerate(self.bodies)
+            for b2 in self.bodies[i + 1:]
+        )
+        print(f"Total Energy: {KE + PE:.3e}")
 
 
 
