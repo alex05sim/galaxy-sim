@@ -23,7 +23,7 @@ class OrbitViewer3D:
     STAR_ALPHA_MAX = 1.0
 
     TRAIL_COLOR = 'white'
-    BODY_MARKER_COLOR = 'blue'
+
     TRAIL_MARKER_COLOR = 'cyan'
 
 
@@ -44,6 +44,7 @@ class OrbitViewer3D:
         self.bodies = bodies
         self.trail_length = 5000
         self.positions = {body.name: [body.position.copy()] for body in bodies}
+        self.body_colors = {body.name: self.get_body_color(body) for body in self.bodies}
 
         # Create canvas and view
         self.canvas = SceneCanvas(keys='interactive', show=True,
@@ -63,29 +64,18 @@ class OrbitViewer3D:
                                       y=(0, self.CANVAS_SIZE[1]))
         self.ui_view.interactive = False  # don’t let mouse drag the HUD
         # now create your labels here:
-        self.info_label = visuals.Text(
-            "", color='white', parent=self.ui_view.scene,
-            font_size=10, anchor_x='left', anchor_y='top'
-        )
-        self.info_label.pos = (10, self.CANVAS_SIZE[1] - 10)
-        self.info_label.visible = False
 
         self.full_info_label = visuals.Text(
             "", color='white', parent=self.ui_view.scene,
             font_size=9, anchor_x='left', anchor_y='top'
         )
-        self.full_info_label.pos = (10, self.CANVAS_SIZE[1] - 30)
+        self.full_info_label.pos = (0, self.CANVAS_SIZE[1] - 100)
         self.full_info_label.visible = False
 
         self.focus_target = None
         self.camera_auto_scale = True
         self.hovered_body = None
         self.selected_body = None
-
-        # Text label for selected object
-        self.info_label.pos = (10, self.CANVAS_SIZE[1] - 10)
-        self.info_label.visible = False
-
 
         self._init_starfield()
         self._init_bodies()
@@ -139,10 +129,25 @@ class OrbitViewer3D:
     def _init_bodies(self):
         self.trails = {}
         self.markers = {}
+        self.body_colors = {body.name: self.get_body_color(body) for body in self.bodies}
+
         for body in self.bodies:
-            self.trails[body.name] = scene.Line(pos=np.zeros((self.trail_length, 3)),
-                                                color=self.TRAIL_COLOR, method='gl', parent=self.view.scene)
-            self.markers[body.name] = Markers(parent=self.view.scene)
+            # Initialize the trail for each body
+            self.trails[body.name] = scene.Line(
+                pos=np.zeros((self.trail_length, 3)),
+                color=self.TRAIL_COLOR,
+                method='gl',
+                parent=self.view.scene
+            )
+
+            # Create a marker with color based on body name/type
+            color = OrbitViewer3D.get_body_color(body)
+            self.markers[body.name] = scene.Markers(parent=self.view.scene)
+            self.markers[body.name].set_data(
+                pos=np.array([body.position]),
+                size=8,
+                face_color=color
+            )
             self.markers[body.name].interactive = True
 
     def update_star_data(self):
@@ -195,13 +200,10 @@ class OrbitViewer3D:
 
             trail = np.array(self.positions[body.name])
             self.trails[body.name].set_data(trail)
-            self.markers[body.name].set_data(pos=trail[-1:], size=8, face_color=self.TRAIL_MARKER_COLOR)
+            self.markers[body.name].set_data(pos=trail[-1:], size=8, face_color=self.body_colors[body.name])
 
-            if self.selected_body:
-                # Project 3D world position to 2D screen coordinates
-                pos_3d = self.selected_body.position
-                pos_2d = self.canvas.scene.node_transform(self.view.scene).map(pos_3d)
-                self.info_label.pos = pos_2d[:2]
+
+
 
         from galaxy_sim.gravity import kinetic_energy, potential_energy
 
@@ -210,8 +212,43 @@ class OrbitViewer3D:
             potential_energy(b1, b2)
             for i, b1 in enumerate(self.bodies)
             for b2 in self.bodies[i + 1:]
+
         )
         print(f"Total Energy: {KE + PE:.3e}")
+
+
+    @staticmethod
+    def get_body_color(body):
+        name = body.name.lower()
+
+        if "sun" in name:
+            return (1.0, 1.0, 0.0, 1.0)  # Yellow
+        elif "mercury" in name:
+            return (0.55, 0.57, 0.67, 1.0)  # Grayish
+        elif "venus" in name:
+            return (0.9, 0.7, 0.4, 1.0)  # Pale yellowish
+        elif "earth" in name:
+            return (0.0, 0.5, 1.0, 1.0)  # Blue
+        elif "moon" in name:
+            return (0.8, 0.8, 0.8, 1.0)  # Light gray
+        elif "mars" in name:
+            return (1.0, 0.3, 0.0, 1.0)  # Reddish-orange
+        elif "jupiter" in name:
+            return (0.8, 0.6, 0.4, 1.0)  # Tan with bands
+        elif "saturn" in name:
+            return (0.9, 0.8, 0.5, 1.0)  # Pale gold
+        elif "uranus" in name:
+            return (0.5, 0.8, 0.9, 1.0)  # Light blue-cyan
+        elif "neptune" in name:
+            return (0.3, 0.4, 0.8, 1.0)  # Deep blue
+        elif "pluto" in name:
+            return (0.8, 0.7, 0.6, 1.0)  # Brown-gray
+        elif body.body_type == "star":
+            return (1.0, 1.0, 0.6, 1.0)  # Generic star color
+        elif body.body_type == "planet":
+            return (0.6, 0.6, 0.8, 1.0)  # Default planet color
+        else:
+            return (1.0, 1.0, 1.0, 1.0)  # Default white
 
 
 

@@ -1,5 +1,9 @@
 
 import numpy as np
+import cupy as cp
+from typing import List
+
+
 from typing import List
 
 G = 6.67430e-11  # Gravitational constant
@@ -58,6 +62,31 @@ def update_accelerations(bodies: List[Body]) -> None:
             body.acceleration = net_force / body.mass
 
 
+def update_accelerations_gpu(positions, masses):
+    N = positions.shape[0]
+
+    # Calculate all pairwise differences r_j - r_i
+    r_i = positions[:, cp.newaxis, :]  # shape (N, 1, 3)
+    r_j = positions[cp.newaxis, :, :]  # shape (1, N, 3)
+    r_ij = r_j - r_i  # shape (N, N, 3)
+
+    # Compute distances with small epsilon for stability
+    distances = cp.linalg.norm(r_ij, axis=2) + 1e-10  # shape (N, N)
+
+    # Mask out self-interaction
+    mask = ~cp.eye(N, dtype=bool)
+    inv_dist3 = cp.where(mask, 1.0 / distances**3, 0.0)  # shape (N, N)
+
+    # Broadcast masses: shape (1, N, 1)
+    masses_j = masses[cp.newaxis, :, cp.newaxis]
+
+    # Compute force contributions
+    forces = G * r_ij * inv_dist3[:, :, cp.newaxis] * masses_j  # shape (N, N, 3)
+
+    # Sum over all j to get net acceleration for each i
+    accels = cp.sum(forces, axis=1)  # shape (N, 3)
+    return accels
+
 #updates position and velocity (Verlet integration style)
 def velocity_verlet_step(bodies: List[Body], dt: float) -> None:
     old_accelerations = [body.acceleration.copy() for body in bodies]
@@ -71,6 +100,40 @@ def velocity_verlet_step(bodies: List[Body], dt: float) -> None:
     #Update velocities
     for body, old_acc in zip(bodies, old_accelerations):
         body.velocity += 0.5 * (old_acc + body.acceleration) * dt
+
+
+
+
+
+def velocity_verlet_step_gpu(bodies, dt):
+    N = len(bodies)
+
+    # Gather all properties to CuPy arrays
+    positions = cp.array([body.position for body in bodies])
+    velocities = cp.array([body.velocity for body in bodies])
+    accelerations = cp.array([body.acceleration for body in bodies])
+    masses = cp.array([body.mass for body in bodies])
+
+    old_accels = accelerations.copy()
+
+    # Update positions
+    positions += velocities * dt + 0.5 * old_accels * dt**2
+
+    # Update accelerations with new positions
+    accelerations = update_accelerations_gpu(positions, masses)
+
+    # Update velocities
+    velocities += 0.5 * (old_accels + accelerations) * dt
+
+    # Push back to CPU
+    pos_np = cp.asnumpy(positions)
+    vel_np = cp.asnumpy(velocities)
+    acc_np = cp.asnumpy(accelerations)
+
+    for i in range(N):
+        bodies[i].position = pos_np[i]
+        bodies[i].velocity = vel_np[i]
+        bodies[i].acceleration = acc_np[i]
 
 #Kinetetic energy
 def kinetic_energy(body: Body) -> float:
