@@ -6,6 +6,9 @@ from vispy.scene.cameras import TurntableCamera, PanZoomCamera
 from vispy.scene.visuals import Markers
 from vispy.scene import Text
 
+from galaxy_sim.gravity import velocity_verlet_step, G
+
+
 class OrbitViewer3D:
     # Class Constant
     CANVAS_SIZE = (1000, 800)
@@ -40,6 +43,11 @@ class OrbitViewer3D:
     }
 
     def __init__(self, bodies, trail_length=300):
+
+        self.orbit_lines = []
+        self.projected_orbits = {}
+
+        self.show_orbits = False
 
         self.bodies = bodies
         self.trail_length = 5000
@@ -145,7 +153,7 @@ class OrbitViewer3D:
             self.markers[body.name] = scene.Markers(parent=self.view.scene)
             self.markers[body.name].set_data(
                 pos=np.array([body.position]),
-                size=8,
+                size=12,
                 face_color=color
             )
             self.markers[body.name].interactive = True
@@ -178,8 +186,12 @@ class OrbitViewer3D:
             self.time_multiplier *= 2
         elif event.key == 'Down':
             self.time_multiplier = max(0.25, self.time_multiplier / 2)
+        elif hasattr(event.key, 'name') and event.key.name.upper() == 'P':
+            self.toggle_projected_orbits()
 
         print(f"⏱ Time multiplier: {self.time_multiplier:.2f}x")
+
+
 
         if self.selected_body:
             if event.key == 'f':
@@ -216,6 +228,62 @@ class OrbitViewer3D:
         )
         print(f"Total Energy: {KE + PE:.3e}")
 
+    def _compute_orbit_path(self, body, steps=500, total_time=None):
+        if total_time is None:
+            total_time = body.orbital_period  # Use default only when available
+
+        dt = total_time / steps
+        pos = body.position.copy()
+        vel = body.velocity.copy()
+        path = []
+
+        sun_pos = np.zeros(3)  # Assume sun at origin
+
+        for _ in range(steps):
+            r = pos - sun_pos
+            acc = -G * 1.989e30 * r / np.linalg.norm(r) ** 3  # Only sun gravity
+            vel += acc * dt
+            pos += vel * dt
+            path.append(pos.copy())
+
+        return np.array(path)
+
+    def draw_projected_orbit(self, body, steps=500):
+        if body.name.lower() == "sun" or body.orbital_period is None:
+            return  # skip Sun or bodies without defined orbital periods
+
+        orbit_radius = np.linalg.norm(body.position)
+        orbit_plane_normal = np.cross(body.position, body.velocity)
+        orbit_plane_normal /= np.linalg.norm(orbit_plane_normal)
+
+        # Create orthonormal basis
+        x_axis = body.position / np.linalg.norm(body.position)
+        y_axis = np.cross(orbit_plane_normal, x_axis)
+        y_axis /= np.linalg.norm(y_axis)
+
+        # Parametric circle in orbit plane
+        angles = np.linspace(0, 2 * np.pi, steps)
+        path = [orbit_radius * (np.cos(a) * x_axis + np.sin(a) * y_axis) for a in angles]
+        path = np.array(path)
+
+        color = self.body_colors.get(body.name, (0.7, 0.7, 0.7, 1.0))
+        orbit_line = scene.Line(pos=path, color=color, width=1.0, parent=self.view.scene)
+        self.projected_orbits[body.name] = orbit_line
+
+    def draw_all_projected_orbits(self):
+        for body in self.bodies:
+            self.draw_projected_orbit(body)
+
+    def toggle_projected_orbits(self):
+        if self.show_orbits:
+            # Remove existing orbit visuals
+            for orbit in self.projected_orbits.values():
+                orbit.parent = None
+            self.projected_orbits.clear()
+            self.show_orbits = False
+        else:
+            self.draw_all_projected_orbits()
+            self.show_orbits = True
 
     @staticmethod
     def get_body_color(body):
