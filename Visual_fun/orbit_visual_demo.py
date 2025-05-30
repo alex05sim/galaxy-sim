@@ -12,7 +12,8 @@ viewer = OrbitViewer3D(bodies)
 
 # Hook up simulation update
 def simulate(event):
-    velocity_verlet_step(bodies, dt=60 * 60)
+    for _ in range(10):
+        velocity_verlet_step(bodies, dt=1)
 
 viewer.timer.connect(simulate)
 viewer.run()
