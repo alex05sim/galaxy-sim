@@ -12,7 +12,7 @@ EPSILON = 1e-8 # softening to avoid div by zero
 class Body:
     #intlizies body
     def __init__(self, mass: float, position: List[float], velocity: List[float] = None, name: str = None,
-                 body_type: str = None, body_subtype: str = None):
+                 body_type: str = None, body_subtype: str = None, orbital_period=None):
         assert mass > 0, f"Mass must be positive, got {mass}"
         self.mass = mass
         self.position = np.array(position, dtype=np.float64)
@@ -23,6 +23,8 @@ class Body:
         self.name = name or "Unnamed"
         self.body_type = body_type or "generic" #body type
         self.body_subtype = body_subtype or None # detail
+        self.orbital_period = orbital_period
+
 
     def __repr__(self):
         return f"Body(name={self.name}, mass = {self.mass:.2e}, pos = {self.position}, velocity = {self.velocity}, accel = {self.acceleration})"
@@ -149,4 +151,22 @@ def simulate(bodies: List[Body], dt: float, steps: int):
     for step in range(steps):
         velocity_verlet_step(bodies, dt)
 
+def compute_orbital_period(body, central_mass):
+    G = 6.67430e-11
+    a = np.linalg.norm(body.position)  # Distance from central body (assumed at origin)
+    return 2 * np.pi * np.sqrt(a**3 / (G * central_mass))
+
+def update_all_orbital_periods(bodies, central_body_name="Sun"):
+    central_mass = None
+    for b in bodies:
+        if b.name.lower() == central_body_name.lower():
+            central_mass = b.mass
+            break
+    if central_mass is None:
+        raise ValueError(f"No central body named '{central_body_name}' found.")
+
+    for body in bodies:
+        if body.name.lower() == central_body_name.lower():
+            continue
+        body.orbital_period = compute_orbital_period(body, central_mass)
 
