@@ -158,19 +158,6 @@ class OrbitViewer3D:
             )
             self.markers[body.name].interactive = True
 
-    def update_star_data(self):
-        t = time.time() * self.STAR_TWINKLE_SPEED
-        twinkle = 0.5 + 0.5 * np.sin(self.star_freq * t + self.star_phase)
-        self.star_alphas = self.STAR_ALPHA_MIN + (self.STAR_ALPHA_MAX - self.STAR_ALPHA_MIN) * twinkle
-
-        star_colors = np.ones((self.num_stars, 4))
-        star_colors[:, :3] = self.star_base_color
-        star_colors[:, 3] = self.star_alphas
-
-        self.stars.set_data(pos=self.star_positions,
-                            size=self.star_base_size,
-                            face_color=star_colors,
-                            edge_width=0)
 
     def _on_click(self, event):
         clicked = self.get_body_under_cursor(event.pos)
@@ -199,7 +186,20 @@ class OrbitViewer3D:
             elif event.key == 'i':
                 self.open_detailed_info(self.selected_body)
                 
-                
+
+    def update_star_data(self):
+        t = time.time() * self.STAR_TWINKLE_SPEED
+        twinkle = 0.5 + 0.5 * np.sin(self.star_freq * t + self.star_phase)
+        self.star_alphas = self.STAR_ALPHA_MIN + (self.STAR_ALPHA_MAX - self.STAR_ALPHA_MIN) * twinkle
+
+        star_colors = np.ones((self.num_stars, 4))
+        star_colors[:, :3] = self.star_base_color
+        star_colors[:, 3] = self.star_alphas
+
+        self.stars.set_data(pos=self.star_positions,
+                            size=self.star_base_size,
+                            face_color=star_colors,
+                            edge_width=0)
 
     def update_frame(self, event):
       ##  self.update_star_data()
@@ -226,7 +226,7 @@ class OrbitViewer3D:
             for b2 in self.bodies[i + 1:]
 
         )
-        print(f"Total Energy: {KE + PE:.3e}")
+        ##print(f"Total Energy: {KE + PE:.3e}")
 
     def _compute_orbit_path(self, body, steps=500, total_time=None):
         if total_time is None:
