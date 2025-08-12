@@ -1,324 +1,264 @@
-import time
+# viewer.py
+
 from vispy import app, scene
 import numpy as np
+import spiceypy
 from vispy.scene import SceneCanvas, visuals
-from vispy.scene.cameras import TurntableCamera, PanZoomCamera
-from vispy.scene.visuals import Markers
-from vispy.scene import Text
-
-from galaxy_sim.gravity import velocity_verlet_step, G
+from vispy.scene.cameras import TurntableCamera
+from .gravity import Probe
+from .prediction import run_prediction
 
 
 class OrbitViewer3D:
-    # Class Constant
-    CANVAS_SIZE = (1000, 800)
+    CANVAS_SIZE = (1600, 900)
     BG_COLOR = 'black'
-    INIT_CAMERA_DISTANCE = 3e11
-    FRAME_INTERVAL = 1 / 60
-
-    STAR_COUNT = 500
-    STAR_POS_RANGE = 1e13
+    RENDER_SCALE = 1e-9
+    INIT_CAMERA_DISTANCE = 4000.0
+    FRAME_INTERVAL = 1 / 60.0
+    STAR_COUNT = 1500
+    STAR_DISTANCE_M = 5e12
     STAR_SIZE_RANGE = (1.0, 2.5)
-    STAR_COLOR_RANGE = (0.8, 1.0)
-    STAR_FREQ_RANGE = (0.5, 1.5)
-    STAR_TWINKLE_SPEED = 2
-    STAR_ALPHA_MIN = 0.3
-    STAR_ALPHA_MAX = 1.0
 
-    TRAIL_COLOR = 'white'
-
-    TRAIL_MARKER_COLOR = 'cyan'
-
-
-    STYLE_LOOKUP = {
-        ("star", "main_sequence"): {"color": "yellow", "size": 18},
-        ("planet", "rocky"): {"color": "gray", "size": 10},
-        ("planet", "gas_giant"): {"color": "orange", "size": 14},
-        ("planet", "ice_giant"): {"color": "cyan", "size": 12},
-        ("moon", "rocky"): {"color": "lightgray", "size": 5},
-        ("moon", "ice"): {"color": "white", "size": 5},
-        ("moon", "hazy"): {"color": "tan", "size": 5},
-        ("planet", "dwarf"): {"color": "lightblue", "size": 6},
-        ("dwarf", "icy_dwarf"): {"color": "lightblue", "size": 4},
+    BODY_VISUALS = {
+        'Sun': {'color': (1.0, 0.9, 0.4), 'radius': 35},
+        'Mercury': {'color': (0.6, 0.6, 0.6), 'radius': 8},
+        'Venus': {'color': (0.9, 0.7, 0.5), 'radius': 12},
+        'Earth': {'color': (0.4, 0.6, 1.0), 'radius': 13},
+        'Mars': {'color': (1.0, 0.5, 0.3), 'radius': 10},
+        'Jupiter': {'color': (0.9, 0.8, 0.6), 'radius': 25},
+        'Saturn': {'color': (1.0, 0.9, 0.7), 'radius': 22},
+        'Uranus': {'color': (0.6, 0.9, 1.0), 'radius': 18},
+        'Neptune': {'color': (0.4, 0.5, 1.0), 'radius': 17},
+        'Default': {'color': (0.8, 0.8, 0.8), 'radius': 5},
+        'probe': {'color': (1.0, 0.2, 0.2), 'radius': 6}
     }
 
-    def __init__(self, bodies, trail_length=300):
-
-        self.orbit_lines = []
-        self.projected_orbits = {}
-
-        self.show_orbits = False
-
+    def __init__(self, bodies, initial_et, trail_length=2500):
         self.bodies = bodies
-        self.trail_length = 5000
+        self.planets = sorted([b for b in bodies if b.body_type == 'planet'], key=lambda p: np.linalg.norm(p.position))
+        self.initial_et = initial_et
+        self.trail_length = trail_length
         self.positions = {body.name: [body.position.copy()] for body in bodies}
-        self.body_colors = {body.name: self.get_body_color(body) for body in self.bodies}
+        self.sphere_radii = {}
 
-        # Create canvas and view
-        self.canvas = SceneCanvas(keys='interactive', show=True,
-                                  bgcolor=self.BG_COLOR, size=self.CANVAS_SIZE)
+        self.canvas = SceneCanvas(keys='interactive', show=True, bgcolor=self.BG_COLOR, size=self.CANVAS_SIZE)
         self.canvas.events.key_press.connect(self.on_key_press)
 
-        # 3D view
         self.view = self.canvas.central_widget.add_view()
-        self.view.camera = TurntableCamera(fov=45, elevation=30, azimuth=30)
-        self.view.camera.distance = self.INIT_CAMERA_DISTANCE
+        self.view.camera = TurntableCamera(fov=45, elevation=30, azimuth=45, distance=self.INIT_CAMERA_DISTANCE)
 
-        # —— ADD THIS: 2D overlay view for HUD ——
         self.ui_view = self.canvas.central_widget.add_view()
-        self.ui_view.camera = PanZoomCamera(aspect=1)
-        # cover exactly the canvas in pixel units
-        self.ui_view.camera.set_range(x=(0, self.CANVAS_SIZE[0]),
-                                      y=(0, self.CANVAS_SIZE[1]))
-        self.ui_view.interactive = False  # don’t let mouse drag the HUD
-        # now create your labels here:
+        self.ui_view.camera = scene.PanZoomCamera(aspect=1)
+        self.ui_view.camera.set_range(x=(0, self.CANVAS_SIZE[0]), y=(0, self.CANVAS_SIZE[1]))
+        self.ui_view.interactive = False
 
-        self.full_info_label = visuals.Text(
-            "", color='white', parent=self.ui_view.scene,
-            font_size=9, anchor_x='left', anchor_y='top'
-        )
-        self.full_info_label.pos = (0, self.CANVAS_SIZE[1] - 100)
-        self.full_info_label.visible = False
+        self.time_label = visuals.Text("", color='white', parent=self.ui_view.scene,
+                                       pos=(self.CANVAS_SIZE[0] - 10, self.CANVAS_SIZE[1] - 20), anchor_x='right')
+        self.launch_ui_label = visuals.Text("", color='yellow', parent=self.ui_view.scene,
+                                            pos=(self.CANVAS_SIZE[0] / 2, 30), anchor_x='center', font_size=14)
 
-        self.focus_target = None
-        self.camera_auto_scale = True
-        self.hovered_body = None
-        self.selected_body = None
+        self.is_paused = False
+        self.time_multiplier = 25.0
+        self.base_dt = 3600 * 6
+
+        self.follow_target = None
+        self.follow_target_idx = -1
+
+        self.launch_mode_active = False
+        self.launch_angle = 90.0
+        self.launch_altitude = 5e7
+        self.launch_speed_dv = 12000.0
+        self.probe_count = 0
+        self.prediction_dirty = True  # Flag to trigger recalculation
 
         self._init_starfield()
-        self._init_bodies()
+        self._init_visuals()
 
-        # Timer for animation
         self.timer = app.Timer(interval=self.FRAME_INTERVAL, connect=self.update_frame, start=True)
 
-        self.steps_to_run = 0
-        self.sim_time = 0
-
-        self.time_label = visuals.Text(
-            "", color='white', parent=self.ui_view.scene,
-            font_size=9, anchor_x='right', anchor_y='top'
-        )
-        self.time_label.pos = (self.CANVAS_SIZE[0] - 10, self.CANVAS_SIZE[1] - 10)
-        self.time_label.visible = True
-
     def _init_starfield(self):
-        self.num_stars = self.STAR_COUNT
-        self.star_positions = np.random.uniform(-self.STAR_POS_RANGE, self.STAR_POS_RANGE, size=(self.num_stars, 3))
-        self.star_base_size = np.random.uniform(*self.STAR_SIZE_RANGE, self.num_stars)
-        self.star_base_color = np.random.uniform(*self.STAR_COLOR_RANGE, size=(self.num_stars, 3))
-        self.star_freq = np.random.uniform(*self.STAR_FREQ_RANGE, self.num_stars)
-        self.star_phase = np.random.uniform(0, 2 * np.pi, self.num_stars)
+        star_positions_m = np.random.uniform(-self.STAR_DISTANCE_M, self.STAR_DISTANCE_M, size=(self.STAR_COUNT, 3))
+        star_sizes = np.random.uniform(*self.STAR_SIZE_RANGE, self.STAR_COUNT)
+        self.stars = scene.Markers(parent=self.view.scene, pos=star_positions_m * self.RENDER_SCALE, size=star_sizes,
+                                   face_color='white', edge_width=0)
 
-        t = time.time() * self.STAR_TWINKLE_SPEED
-        twinkle = 0.5 + 0.5 * np.sin(self.star_freq * t + self.star_phase)
-        self.star_alphas = self.STAR_ALPHA_MIN + (self.STAR_ALPHA_MAX - self.STAR_ALPHA_MIN) * twinkle
-
-        star_colors = np.ones((self.num_stars, 4))
-        star_colors[:, :3] = self.star_base_color
-        star_colors[:, 3] = self.star_alphas
-
-        self.stars = scene.Markers(parent=self.view.scene)
-        self.stars.set_data(pos=self.star_positions,
-                            size=self.star_base_size,
-                            face_color=star_colors,
-                            edge_width=0)
-
-    def focus_on(self, body, parent = None):
-        self.focus_target = body
-        focus_pos = body.position
-        if parent:
-            focus_pos = (body.position - parent.position) / 2
-        self.view.camera.center = focus_pos.tolist()
-
-        if self.camera_auto_scale and parent:
-            distance = np.linalg.norm(body.position - parent.position)
-            self.view.camera.distance = distance * 3
-
-    def _init_bodies(self):
+    def _init_visuals(self):
         self.trails = {}
-        self.markers = {}
-        self.body_colors = {body.name: self.get_body_color(body) for body in self.bodies}
-
+        self.spheres = {}
         for body in self.bodies:
-            # Initialize the trail for each body
-            self.trails[body.name] = scene.Line(
-                pos=np.zeros((self.trail_length, 3)),
-                color=self.TRAIL_COLOR,
-                method='gl',
-                parent=self.view.scene
-            )
+            self._create_visuals_for_body(body)
 
-            # Create a marker with color based on body name/type
-            color = OrbitViewer3D.get_body_color(body)
-            self.markers[body.name] = scene.Markers(parent=self.view.scene)
-            self.markers[body.name].set_data(
-                pos=np.array([body.position]),
-                size=12,
-                face_color=color
-            )
-            self.markers[body.name].interactive = True
+        self.targeting_line = scene.Line(pos=np.zeros((2, 3)), color='cyan', width=2, parent=self.view.scene)
+        self.targeting_line.visible = False
+        self.prediction_path_visual = scene.Line(pos=np.zeros((1, 3)), color=(1, 1, 0, 0.5), width=2, connect='strip',
+                                                 method='gl', parent=self.view.scene)
 
+    def _create_visuals_for_body(self, body):
+        visual_props = self.BODY_VISUALS.get(body.name,
+                                             self.BODY_VISUALS.get(body.body_type, self.BODY_VISUALS['Default']))
+        visual_radius = visual_props['radius']
+        sphere_color = visual_props['color']
 
-    def _on_click(self, event):
-        clicked = self.get_body_under_cursor(event.pos)
-        if clicked:
-            self.selected_body = clicked
-            self.info_label.text = clicked.name
-            self.info_label.visible = True
-            self.full_info_label.text = clicked.short_description()
-            self.full_info_label.visible = True
+        self.sphere_radii[body.name] = visual_radius
+        self.spheres[body.name] = visuals.Sphere(radius=visual_radius, rows=30, cols=30, method='latitude',
+                                                 parent=self.view.scene, color=sphere_color, shading=None)
+        self.spheres[body.name].transform = scene.transforms.MatrixTransform()
+        self.trails[body.name] = scene.Line(pos=np.zeros((1, 3)), color='white', width=1.5, method='gl',
+                                            parent=self.view.scene)
 
     def on_key_press(self, event):
+        parameter_changed = False
+        if event.key == 'Left':
+            self.follow_target_idx = (self.follow_target_idx - 1 + len(self.planets)) % len(self.planets)
+            self.follow_target = self.planets[self.follow_target_idx]
+            self.view.camera.distance = 1500
+            parameter_changed = True
+        elif event.key == 'Right':
+            self.follow_target_idx = (self.follow_target_idx + 1) % len(self.planets)
+            self.follow_target = self.planets[self.follow_target_idx]
+            self.view.camera.distance = 1500
+            parameter_changed = True
+
+        if self.launch_mode_active:
+            if event.key == 'A':
+                self.launch_angle -= 5.0; parameter_changed = True
+            elif event.key == 'D':
+                self.launch_angle += 5.0; parameter_changed = True
+            elif event.key == 'W':
+                self.launch_altitude += 5e6; parameter_changed = True
+            elif event.key == 'S':
+                self.launch_altitude = max(1e7, self.launch_altitude - 5e6); parameter_changed = True
+            elif event.key == 'G':
+                self.launch_speed_dv += 500.0; parameter_changed = True
+            elif event.key == 'H':
+                self.launch_speed_dv = max(1000.0, self.launch_speed_dv - 500.0); parameter_changed = True
+            elif event.key == 'L':
+                self.launch_probe()
+
         if event.key == 'Up':
-            self.time_multiplier *= 2
+            self.time_multiplier = min(self.time_multiplier * 2, 2 ** 10)
         elif event.key == 'Down':
-            self.time_multiplier = max(0.25, self.time_multiplier / 2)
-        elif hasattr(event.key, 'name') and event.key.name.upper() == 'P':
-            self.toggle_projected_orbits()
+            self.time_multiplier = max(self.time_multiplier / 2, 1)
+        elif event.key == 'Space':
+            self.is_paused = not self.is_paused
+        elif event.key == 'R':
+            self.follow_target = None
+            self.follow_target_idx = -1
+            self.view.camera.distance = self.INIT_CAMERA_DISTANCE
+            parameter_changed = True
 
-        print(f"⏱ Time multiplier: {self.time_multiplier:.2f}x")
+        if parameter_changed:
+            self.prediction_dirty = True
 
+    def launch_probe(self):
+        if not self.follow_target: return
+        self.probe_count += 1
+        launch_body = self.follow_target
 
+        angle_rad = np.deg2rad(self.launch_angle)
+        launch_dir = np.array([np.cos(angle_rad), np.sin(angle_rad), 0])
 
-        if self.selected_body:
-            if event.key == 'f':
-                self.focus_on(self.selected_body)
-            elif event.key == 'i':
-                self.open_detailed_info(self.selected_body)
-                
+        probe_pos = launch_body.position + launch_dir * self.launch_altitude
+        probe_vel = launch_body.velocity + launch_dir * self.launch_speed_dv
 
-    def update_star_data(self):
-        t = time.time() * self.STAR_TWINKLE_SPEED
-        twinkle = 0.5 + 0.5 * np.sin(self.star_freq * t + self.star_phase)
-        self.star_alphas = self.STAR_ALPHA_MIN + (self.STAR_ALPHA_MAX - self.STAR_ALPHA_MIN) * twinkle
+        new_probe = Probe(name=f"Probe-{self.probe_count}", position=probe_pos, velocity=probe_vel,
+                          parent=launch_body.name)
 
-        star_colors = np.ones((self.num_stars, 4))
-        star_colors[:, :3] = self.star_base_color
-        star_colors[:, 3] = self.star_alphas
+        self.bodies.append(new_probe)
+        self._create_visuals_for_body(new_probe)
+        self.positions[new_probe.name] = [new_probe.position]
 
-        self.stars.set_data(pos=self.star_positions,
-                            size=self.star_base_size,
-                            face_color=star_colors,
-                            edge_width=0)
+        self.canvas.app.engine.add_body(new_probe, self.bodies)
+        print(f"🚀 LAUNCHED {new_probe.name} from {launch_body.name}!")
+        self.follow_target = new_probe
+
+    def _update_prediction_path(self):
+        if not self.launch_mode_active:
+            self.prediction_path_visual.visible = False
+            return
+
+        self.prediction_path_visual.visible = True
+        self.launch_ui_label.text = "Calculating trajectory..."
+
+        launch_body = self.follow_target
+        angle_rad = np.deg2rad(self.launch_angle)
+        launch_dir = np.array([np.cos(angle_rad), np.sin(angle_rad), 0])
+
+        probe_pos = launch_body.position + launch_dir * self.launch_altitude
+        probe_vel = launch_body.velocity + launch_dir * self.launch_speed_dv
+
+        ghost_probe = Probe(name="ghost", position=probe_pos, velocity=probe_vel)
+
+        non_probe_bodies = [b for b in self.bodies if not isinstance(b, Probe)]
+        path = run_prediction(non_probe_bodies, ghost_probe, duration_days=365 * 5, dt=self.base_dt)
+        self.prediction_path_visual.set_data(pos=path * self.RENDER_SCALE)
+        self.prediction_dirty = False  # Mark prediction as clean
 
     def update_frame(self, event):
-      ##  self.update_star_data()
-        self.time_label.text = f"Sim Time: {self.sim_time / 86400:.2f} days\nSpeed: {self.time_multiplier:.2f}x"
+        if not hasattr(self.canvas.app, 'engine'): return
+
+        current_et = self.canvas.app.engine.et
+        date_str = spiceypy.et2utc(current_et, "C", 3)
+
+        self.launch_mode_active = self.follow_target and self.follow_target.body_type == 'planet'
+
+        if self.is_paused:
+            self.time_label.text = f"{date_str} (PAUSED)"
+            if self.launch_mode_active:
+                if self.prediction_dirty: self._update_prediction_path()
+                self._update_launch_ui()
+            return
+
+        self.time_label.text = f"{date_str} | Speed: {self.time_multiplier:.0f}x"
+
+        if self.launch_mode_active:
+            if self.prediction_dirty: self._update_prediction_path()
+            self._update_launch_ui()
+        else:
+            self.launch_ui_label.text = ""
+            self.targeting_line.visible = False
+            self.prediction_path_visual.visible = False
+
+        if self.follow_target:
+            self.view.camera.center = self.follow_target.position * self.RENDER_SCALE
+        else:
+            self.view.camera.center = [0, 0, 0]
 
         for body in self.bodies:
+            if body.name not in self.spheres: continue
+
             self.positions[body.name].append(body.position.copy())
-            if len(self.positions[body.name]) > self.trail_length:
-                self.positions[body.name].pop(0)
+            if len(self.positions[body.name]) > self.trail_length: self.positions[body.name].pop(0)
 
-            trail = np.array(self.positions[body.name])
-            self.trails[body.name].set_data(trail)
-            self.markers[body.name].set_data(pos=trail[-1:], size=8, face_color=self.body_colors[body.name])
+            trail_scaled = np.array(self.positions[body.name]) * self.RENDER_SCALE
+            self.spheres[body.name].transform.translate = trail_scaled[-1]
 
+            visual_props = self.BODY_VISUALS.get(body.name,
+                                                 self.BODY_VISUALS.get(body.body_type, self.BODY_VISUALS['Default']))
+            base_color = visual_props['color']
 
+            alphas = np.linspace(0.0, 0.9, len(trail_scaled))
+            colors = np.tile(base_color, (len(trail_scaled), 1));
+            colors = np.append(colors, alphas[:, np.newaxis], axis=1)
+            self.trails[body.name].set_data(pos=trail_scaled, color=colors)
 
-
-        from galaxy_sim.gravity import kinetic_energy, potential_energy
-
-        KE = sum(kinetic_energy(b) for b in self.bodies)
-        PE = sum(
-            potential_energy(b1, b2)
-            for i, b1 in enumerate(self.bodies)
-            for b2 in self.bodies[i + 1:]
-
-        )
-        ##print(f"Total Energy: {KE + PE:.3e}")
-
-    def _compute_orbit_path(self, body, steps=500, total_time=None):
-        if total_time is None:
-            total_time = body.orbital_period  # Use default only when available
-
-        dt = total_time / steps
-        pos = body.position.copy()
-        vel = body.velocity.copy()
-        path = []
-
-        sun_pos = np.zeros(3)  # Assume sun at origin
-
-        for _ in range(steps):
-            r = pos - sun_pos
-            acc = -G * 1.989e30 * r / np.linalg.norm(r) ** 3  # Only sun gravity
-            vel += acc * dt
-            pos += vel * dt
-            path.append(pos.copy())
-
-        return np.array(path)
-
-    def draw_projected_orbit(self, body, steps=500):
-        if body.name.lower() == "sun" or body.orbital_period is None:
-            return  # skip Sun or bodies without defined orbital periods
-
-        orbit_radius = np.linalg.norm(body.position)
-        orbit_plane_normal = np.cross(body.position, body.velocity)
-        orbit_plane_normal /= np.linalg.norm(orbit_plane_normal)
-
-        # Create orthonormal basis
-        x_axis = body.position / np.linalg.norm(body.position)
-        y_axis = np.cross(orbit_plane_normal, x_axis)
-        y_axis /= np.linalg.norm(y_axis)
-
-        # Parametric circle in orbit plane
-        angles = np.linspace(0, 2 * np.pi, steps)
-        path = [orbit_radius * (np.cos(a) * x_axis + np.sin(a) * y_axis) for a in angles]
-        path = np.array(path)
-
-        color = self.body_colors.get(body.name, (0.7, 0.7, 0.7, 1.0))
-        orbit_line = scene.Line(pos=path, color=color, width=1.0, parent=self.view.scene)
-        self.projected_orbits[body.name] = orbit_line
-
-    def draw_all_projected_orbits(self):
-        for body in self.bodies:
-            self.draw_projected_orbit(body)
-
-    def toggle_projected_orbits(self):
-        if self.show_orbits:
-            # Remove existing orbit visuals
-            for orbit in self.projected_orbits.values():
-                orbit.parent = None
-            self.projected_orbits.clear()
-            self.show_orbits = False
+    def _update_launch_ui(self):
+        if self.prediction_dirty:
+            self.launch_ui_label.text = "Calculating trajectory..."
         else:
-            self.draw_all_projected_orbits()
-            self.show_orbits = True
+            launch_planet_name = self.follow_target.name if self.follow_target else "N/A"
+            self.launch_ui_label.text = f"AIMING FROM: {launch_planet_name} | ALT: {self.launch_altitude / 1e6:.1f}k km | ANGLE: {self.launch_angle:.0f}° | Δv: {self.launch_speed_dv / 1000:.1f} km/s"
 
-    @staticmethod
-    def get_body_color(body):
-        name = body.name.lower()
+        angle_rad = np.deg2rad(self.launch_angle)
+        launch_dir = np.array([np.cos(angle_rad), np.sin(angle_rad), 0])
+        line_start = self.follow_target.position * self.RENDER_SCALE
 
-        if "sun" in name:
-            return (1.0, 1.0, 0.0, 1.0)  # Yellow
-        elif "mercury" in name:
-            return (0.55, 0.57, 0.67, 1.0)  # Grayish
-        elif "venus" in name:
-            return (0.9, 0.7, 0.4, 1.0)  # Pale yellowish
-        elif "earth" in name:
-            return (0.0, 0.5, 1.0, 1.0)  # Blue
-        elif "moon" in name:
-            return (0.8, 0.8, 0.8, 1.0)  # Light gray
-        elif "mars" in name:
-            return (1.0, 0.3, 0.0, 1.0)  # Reddish-orange
-        elif "jupiter" in name:
-            return (0.8, 0.6, 0.4, 1.0)  # Tan with bands
-        elif "saturn" in name:
-            return (0.9, 0.8, 0.5, 1.0)  # Pale gold
-        elif "uranus" in name:
-            return (0.5, 0.8, 0.9, 1.0)  # Light blue-cyan
-        elif "neptune" in name:
-            return (0.3, 0.4, 0.8, 1.0)  # Deep blue
-        elif "pluto" in name:
-            return (0.8, 0.7, 0.6, 1.0)  # Brown-gray
-        elif body.body_type == "star":
-            return (1.0, 1.0, 0.6, 1.0)  # Generic star color
-        elif body.body_type == "planet":
-            return (0.6, 0.6, 0.8, 1.0)  # Default planet color
-        else:
-            return (1.0, 1.0, 1.0, 1.0)  # Default white
-
-
+        line_length = 30 + (self.launch_speed_dv / 1000) * 2.5
+        line_end = line_start + launch_dir * line_length
+        self.targeting_line.set_data(pos=np.vstack([line_start, line_end]), color='cyan')
+        self.targeting_line.visible = True
 
     def run(self):
+        if hasattr(self.canvas.app, 'engine'):
+            self.canvas.app.engine = self.canvas.app.engine
         app.run()

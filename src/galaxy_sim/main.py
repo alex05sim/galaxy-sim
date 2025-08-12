@@ -1,38 +1,71 @@
+# main.py
 
-from galaxy_sim.gravity import Body, update_accelerations, velocity_verlet_step, velocity_verlet_step_gpu
-from galaxy_sim.view_controller import BodyInteractor
+import os
+import spiceypy as spice
+from galaxy_sim.engine import SimulationEngine
 from galaxy_sim.viewer import OrbitViewer3D
-from galaxy_sim.solar_system import load_solar_system
+from galaxy_sim.solar_system import load_bodies_from_spice
 
 
-# Setup system
-bodies = load_solar_system()
-update_accelerations(bodies)
+def main():
+    script_dir = os.path.dirname(__file__) if "__file__" in locals() else "."
+    spk_path = os.path.join(script_dir, "de442.bsp")
+    tls_path = os.path.join(script_dir, "latest_leapseconds.tls")
 
-# Viewer
-viewer = OrbitViewer3D(bodies)
-viewer.time_multiplier = 1.0
-viewer.base_dt = 60 * 60 # second per step
+    try:
+        spice.furnsh(tls_path)
+        spice.furnsh(spk_path)
+        print("✔ SPICE kernels loaded.")
+    except Exception as e:
+        print(f"✘ ERROR loading SPICE kernels: {e}")
+        return
 
-interactor = BodyInteractor(viewer)
+    epoch = "2025-06-01"
+    initial_et = spice.str2et(f"{epoch} TDB")
+    bodies = load_bodies_from_spice(spk_path, initial_et)
+    if not bodies:
+        print("✘ No bodies were loaded.")
+        spice.kclear()
+        return
+
+    engine = SimulationEngine(bodies, initial_et)
+    viewer = OrbitViewer3D(bodies, initial_et)
+
+    viewer.canvas.app.engine = engine
+
+    def simulate(event):
+        if not viewer.is_paused:
+            steps_to_run = int(viewer.time_multiplier)
+            if steps_to_run > 0:
+                for _ in range(steps_to_run):
+                    engine.step(dt=viewer.base_dt)
+                engine.update_body_objects(viewer.bodies)
+
+    viewer.timer.connect(simulate)
+
+    print("\n" + "=" * 60)
+    print("🚀 N-BODY GRAVITY SIMULATOR & MISSION PLANNER 🚀")
+    print("=" * 60)
+    print("\n--- Camera & Time Controls ---")
+    print("  - Drag Mouse / Scroll Wheel: Rotate & Zoom")
+    print("  - Up/Down Arrows / Spacebar: Control Time Speed & Pause")
+
+    print("\n--- Planet Selection ---")
+    print("  - Left/Right Arrows: Cycle through planets to select a launch point")
+
+    print("\n--- Gravity Assist Probe Launcher ---")
+    print("  - W / S Keys: Adjust launch altitude")
+    print("  - A / D Keys: Adjust launch angle")
+    print("  - G(+)/H(-) Keys: Adjust launch speed (delta-v)")
+    print("  - The yellow line shows your predicted trajectory.")
+    print("  - Press 'L' to LAUNCH!")
+    print("=" * 60 + "\n")
+
+    viewer.run()
+
+    spice.kclear()
+    print("✔ SPICE kernels cleared.")
 
 
-# Hook up simulation update
-def simulate(event):
-    viewer.steps_to_run += viewer.time_multiplier
-
-    # Cap how many we simulate in one frame (avoid freezing)
-    max_steps_per_frame = 1000
-
-    steps_this_frame = min(int(viewer.steps_to_run), max_steps_per_frame)
-    for _ in range(steps_this_frame):
-        velocity_verlet_step_gpu(bodies, dt=viewer.base_dt)
-        viewer.sim_time += viewer.base_dt
-        viewer.steps_to_run -= 1
-
-
-
-
-viewer.timer.connect(simulate)
-viewer.run()
-
+if __name__ == "__main__":
+    main()
