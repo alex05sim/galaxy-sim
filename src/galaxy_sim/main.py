@@ -52,13 +52,12 @@ def main():
 
     print("\n--- Planet Selection ---")
     print("  - Left/Right Arrows: Cycle through planets to select a launch point")
+    print("  - 'R': Reset view to the whole Solar System")
 
-    print("\n--- Gravity Assist Probe Launcher ---")
-    print("  - W / S Keys: Adjust launch altitude")
-    print("  - A / D Keys: Adjust launch angle")
-    print("  - G(+)/H(-) Keys: Adjust launch speed (delta-v)")
-    print("  - The yellow line shows your predicted trajectory.")
-    print("  - Press 'L' to LAUNCH!")
+    print("\n--- Mission Planning ---")
+    print("  - Press 'T' to cycle through target planets.")
+    print("  - Press 'O' to automatically find the best trajectory to the target.")
+    print("  - Press 'L' to LAUNCH the optimized probe!")
     print("=" * 60 + "\n")
 
     viewer.run()

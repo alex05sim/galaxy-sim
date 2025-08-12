@@ -26,10 +26,12 @@ class Body:
 
     def full_description(self):
         speed_kms = np.linalg.norm(self.velocity) / 1000
+        dist_au = np.linalg.norm(self.position) / 1.496e11
         return (f"Name: {self.name}\n"
-                f"Type: {self.body_type.capitalize()}\n"
-                f"Mass: {self.mass:.2e} kg\n"
-                f"Speed: {speed_kms:.2f} km/s")
+                f"Speed: {speed_kms:.2f} km/s\n"
+                f"Position X: {self.position[0]/1e9:.2f} M km\n"
+                f"Position Y: {self.position[1]/1e9:.2f} M km\n"
+                f"Distance from Sun: {dist_au:.2f} AU")
 
 class Probe(Body):
     """A specialized Body with very low mass to act as a spacecraft."""
@@ -42,6 +44,14 @@ class Probe(Body):
         return (f"Name: {self.name}\n"
                 f"Type: {self.body_type.capitalize()}\n"
                 f"Speed: {speed_kms:.2f} km/s{parent_str}")
+
+class Ring:
+    """A visual representation of a planetary ring system."""
+    def __init__(self, body_name, inner_radius, outer_radius, color):
+        self.body_name = body_name
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.color = color
 
 def update_accelerations_gpu(positions, masses):
     N = positions.shape[0]
