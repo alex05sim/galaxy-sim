@@ -4,8 +4,8 @@ This is a high-performance, interactive 3D simulation of our solar system, built
 
 Beyond being a simple viewer, this project has evolved into a feature-rich **Mission Planner**, allowing you to design and launch your own interplanetary probes and visualize complex orbital maneuvers like gravity assists.
 
-![Galaxy Sim Screenshot](https://i.imgur.com/your_screenshot_url.png)
-*(Suggestion: Replace this with a screenshot you've taken, like `image_db486b.png`)*
+<img width="1594" height="941" alt="image" src="https://github.com/user-attachments/assets/f4c57968-f647-4c38-bb17-62a51b9176a2" />
+
 
 ## ✨ Features
 
